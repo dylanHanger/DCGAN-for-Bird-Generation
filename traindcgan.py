@@ -1,16 +1,17 @@
 import argparse
 import os
-import time
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
+import wandb
 from keras.layers import (Activation, BatchNormalization, Conv2D,
                           Conv2DTranspose, Dense, Flatten, Reshape)
 from keras.layers.advanced_activations import LeakyReLU
 from keras.models import Sequential
 from keras.optimizers import Adam
 from keras.preprocessing.image import ImageDataGenerator
+from PIL import Image
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -125,7 +126,7 @@ def construct_generator():
 
 # Displays a figure of the generated images and saves them in as .png image
 def save_generated_images(generated_images, epoch, batch_number):
-
+    plt.ioff()
     plt.figure(figsize=(8, 8), num=2)
     gs1 = gridspec.GridSpec(8, 8)
     gs1.update(wspace=0, hspace=0)
@@ -146,12 +147,13 @@ def save_generated_images(generated_images, epoch, batch_number):
         epoch + 1) + '_batch' + str(batch_number + 1) + '.png'
 
     plt.savefig(save_name, bbox_inches='tight', pad_inches=0)
-    plt.pause(0.0000000001)
-    plt.show()
+    return save_name
 
 
 # Main train function
-def train_dcgan(batch_size, epochs, image_shape, dataset_path, plot=True):
+def train_dcgan(batch_size, epochs, image_shape, dataset_path):
+    wandb.init()
+
     # Build the adversarial model that consists in the generator output
     # connected to the discriminator
     generator = construct_generator()
@@ -179,20 +181,11 @@ def train_dcgan(batch_size, epochs, image_shape, dataset_path, plot=True):
     discriminator_loss = np.empty(shape=1)
     batches = np.empty(shape=1)
 
-    # Allo plot updates inside for loop
-    plt.ion()
-
     current_batch = 0
 
     # Let's train the DCGAN for n epochs
     for epoch in range(epochs):
-
-        print("Epoch " + str(epoch+1) + "/" + str(epochs) + " :")
-
         for batch_number in range(number_of_batches):
-
-            start_time = time.time()
-
             # Get the current batch and normalize the images between -1 and 1
             real_images = dataset_generator.next()
             real_images /= 127.5
@@ -241,17 +234,20 @@ def train_dcgan(batch_size, epochs, image_shape, dataset_path, plot=True):
             # Each 50 batches show and save images
             if ((batch_number + 1) % 50 == 0 and
                current_batch_size == batch_size):
-                save_generated_images(generated_images, epoch, batch_number)
+                image_path = save_generated_images(generated_images,
+                                                   epoch,
+                                                   batch_number)
+                # Load the image from the saved file
+                image = Image.open(image_path)
+                # Log the image to wandb
+                wandb.log({"Generated Images": [wandb.Image(image)]})
 
-            time_elapsed = time.time() - start_time
-
-            # Display and plot the results
-            print("     Batch " + str(batch_number + 1) + "/" +
-                  str(number_of_batches) +
-                  " generator loss | discriminator loss : " +
-                  str(g_loss) + " | " + str(d_loss) + ' - batch took ' +
-                  str(time_elapsed) + ' s.')
-
+            wandb.log({
+                "Discriminator Loss": d_loss,
+                "Generator Loss": g_loss,
+                "Batch": current_batch,
+                "Epoch": epoch
+            })
             current_batch += 1
 
         # Save the model weights each 5 epochs
@@ -261,29 +257,13 @@ def train_dcgan(batch_size, epochs, image_shape, dataset_path, plot=True):
             discriminator.save('models/discriminator_epoch' +
                                str(epoch) + '.hdf5')
 
-        if plot:
-            # Each epoch update the loss graphs
-            plt.figure(1)
-            plt.plot(batches, adversarial_loss, color='green',
-                     label='Generator Loss')
-            plt.plot(batches, discriminator_loss, color='blue',
-                     label='Discriminator Loss')
-            plt.title("DCGAN Train")
-            plt.xlabel("Batch Iteration")
-            plt.ylabel("Loss")
-            if epoch == 0:
-                plt.legend()
-            plt.pause(0.0000000001)
-            plt.show()
-            plt.savefig('trainingLossPlot.png')
 
-
-def main(dataset_path='/mnt/d/datasets/CUB_200_2011/images/', plot=True):
+def main(dataset_path='/mnt/d/datasets/CUB_200_2011/images/'):
     batch_size = 64
     image_shape = (64, 64, 3)
     epochs = 190
     train_dcgan(batch_size, epochs,
-                image_shape, dataset_path, plot)
+                image_shape, dataset_path)
 
 
 if __name__ == "__main__":
@@ -292,11 +272,7 @@ if __name__ == "__main__":
                         type=str,
                         default='/mnt/d/datasets/CUB_200_2011/images/',
                         help='Path to the dataset')
-    parser.add_argument('-p', '--plot',
-                        type=bool,
-                        default=True,
-                        help='Enable or disable plotting')
 
     args = parser.parse_args()
 
-    main(dataset_path=args.dataset_path, plot=args.plot)
+    main(dataset_path=args.dataset_path)
