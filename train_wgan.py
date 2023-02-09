@@ -1,19 +1,21 @@
-import time
+import argparse
 import os
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import numpy as np
+import time
 
-from keras.models import Sequential
-from keras.layers import Conv2D, Conv2DTranspose, Reshape, concatenate
-from keras.layers import Flatten, BatchNormalization, Dense, Activation
+import keras.backend as K
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+import wandb
+from keras.initializers import RandomNormal
+from keras.layers import (Activation, BatchNormalization, Conv2D,
+                          Conv2DTranspose, Dense, Flatten, Reshape)
 from keras.layers.advanced_activations import LeakyReLU
+from keras.models import Sequential
 from keras.optimizers import RMSprop
 from keras.preprocessing.image import ImageDataGenerator
-from keras.initializers import RandomNormal
-import keras.backend as K
-
-import tensorflow as tf
+from PIL import Image
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -180,6 +182,7 @@ def write_to_tensorboard(generator_step, summary_writer,
 
 # Displays a figure of the generated images and saves them in as .png image
 def save_generated_images(generated_images, generator_iteration):
+    plt.ioff()
 
     # Create the plot
     plt.figure(figsize=(8, 8), num=1)
@@ -202,12 +205,12 @@ def save_generated_images(generated_images, generator_iteration):
         str(generator_iteration + 1) + '.png'
 
     plt.savefig(save_name, bbox_inches='tight', pad_inches=0)
-    plt.pause(0.0000000001)
-    plt.show()
+    return save_name
 
 
 # Main train function
 def train_wgan(batch_size, epochs, image_shape, dataset_path):
+    wandb.init()
 
     # Build the adversarial model that consists in the generator output
     # connected to the critic
@@ -230,12 +233,6 @@ def train_wgan(batch_size, epochs, image_shape, dataset_path):
 
     # 11788 is the total number of images on the bird dataset
     number_of_batches = int(11788 / batch_size)
-
-    # Tensorboard log variable
-    summary_writer = tf.summary.FileWriter('./logs/WGAN')
-
-    # Create the plot that will show the losses
-    plt.ion()
 
     # Variables used for loss saving
     generator_iterations = 0
@@ -322,15 +319,18 @@ def train_wgan(batch_size, epochs, image_shape, dataset_path):
             if ((generator_iterations + 1) % 100 == 0):
                 noise = np.random.normal(0, 1, size=(64,) + (1, 1, 100))
                 generated_images = generator.predict(noise)
-                save_generated_images(generated_images, generator_iterations)
+                image_path = save_generated_images(generated_images, generator_iterations)
+                image = Image.open(image_path)
+                wandb.log({"Generated Images": [wandb.Image(image)]})
 
-            # Update tensorboard plots
-            write_to_tensorboard(generator_iterations, summary_writer, losses)
-
-            time_elapsed = time.time() - start_time
-            print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake %f - %f s'
-                  % (epoch, epochs, current_batch, number_of_batches, generator_iterations,
-                     d_loss, g_loss, d_real, d_fake, time_elapsed))
+            wandb.log({
+                "Generator Loss": g_loss,
+                "Discriminator Loss": d_loss,
+                "Critic Real Loss": d_real,
+                "Critic Fake Loss": d_fake,
+                "Batch": current_batch,
+                "Epoch": epoch
+            })
 
             generator_iterations += 1
 
@@ -340,8 +340,7 @@ def train_wgan(batch_size, epochs, image_shape, dataset_path):
             critic.save('models/critic_epoch' + str(epoch) + '.hdf5')
 
 
-def main():
-    dataset_path = '/media/tfreitas/LENOVO/Datasets/CUB_200_2011/CUB_200_2011/images/'
+def main(dataset_path='/mnt/d/datasets/CUB_200_2011/images/'):
     batch_size = 64
     image_shape = (64, 64, 3)
     epochs = 5000
@@ -351,4 +350,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--dataset_path',
+                        type=str,
+                        default='/mnt/d/datasets/CUB_200_2011/images/',
+                        help='Path to the dataset')
+
+    args = parser.parse_args()
+
+    main(dataset_path=args.dataset_path)
